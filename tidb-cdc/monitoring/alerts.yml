@@ -1,0 +1,88 @@
+groups:
+  - name: tidb_cdc_alerts
+    interval: 30s
+    rules:
+      # CDC Processing Alerts
+      - alert: CDCProcessingHighErrorRate
+        expr: rate(tidb_cdc_processing_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: cdc-consumer
+        annotations:
+          summary: "High CDC processing error rate"
+          description: "CDC consumer is experiencing {{ $value | humanize }}% error rate"
+
+      - alert: CDCProcessingStopped
+        expr: rate(tidb_cdc_operations_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          component: cdc-consumer
+        annotations:
+          summary: "CDC processing has stopped"
+          description: "No CDC operations processed in the last 10 minutes"
+
+      - alert: CDCProcessingHighLatency
+        expr: histogram_quantile(0.95, rate(tidb_cdc_processing_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: cdc-consumer
+        annotations:
+          summary: "High CDC processing latency"
+          description: "95th percentile processing time is {{ $value | humanize }}s"
+
+      # Kafka Alerts
+      - alert: KafkaConsumerLag
+        expr: tidb_cdc_kafka_lag > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer lag is {{ $value }} messages on {{ $labels.topic }}"
+
+      # Application Alerts
+      - alert: ConsumerDown
+        expr: up{job="node-consumer"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: cdc-consumer
+        annotations:
+          summary: "CDC Consumer is down"
+          description: "Consumer has been down for more than 2 minutes"
+
+      - alert: HighMemoryUsage
+        expr: (nodejs_heap_size_used_bytes / nodejs_heap_size_total_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: cdc-consumer
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }}"
+
+      # TiDB Alerts
+      - alert: TiDBDown
+        expr: up{job="tidb"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: tidb
+        annotations:
+          summary: "TiDB is down"
+          description: "TiDB server is unreachable"
+
+      # Elasticsearch Alerts
+      - alert: ElasticsearchDown
+        expr: up{job="elasticsearch"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: elasticsearch
+        annotations:
+          summary: "Elasticsearch is down"
+          description: "Elasticsearch has been down for more than 2 minutes"

@@ -1,0 +1,251 @@
+version: "3.9"
+
+services:
+  # -----------------------
+  # PD – Placement Driver
+  # -----------------------
+  tidb-pd:
+    image: pingcap/pd:v7.5.1
+    container_name: tidb-pd
+    command:
+      - --name=pd
+      - --data-dir=/var/lib/pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://tidb-pd:2379
+      - --advertise-peer-urls=http://tidb-pd:2380
+      - --log-level=info
+    ports:
+      - "2379:2379"
+    networks:
+      - tidb-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2379/pd/api/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # -----------------------
+  # TiKV
+  # -----------------------
+  tidb-tikv:
+    image: pingcap/tikv:v7.5.1
+    container_name: tidb-tikv
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tidb-tikv:20160
+      - --status-addr=0.0.0.0:20180
+      - --pd-endpoints=tidb-pd:2379   
+    ports:
+      - "20160:20160"
+    volumes:
+      - ./data/tikv:/var/lib/tikv
+    networks:
+      - tidb-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:20180/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # -----------------------
+  # TiDB Server
+  # -----------------------
+  tidb-server:
+    image: pingcap/tidb:v7.5.1
+    container_name: tidb-server
+    command:
+      - --store=tikv
+      - --path=tidb-pd:2379
+      - --advertise-address=tidb-server
+      - --host=0.0.0.0
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    depends_on:
+      tidb-pd:
+        condition: service_healthy
+      tidb-tikv:
+        condition: service_healthy
+    networks:
+      - tidb-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:10080/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # -----------------------
+  # TiCDC 
+  # -----------------------
+  tidb-cdc:
+    image: pingcap/ticdc:v7.5.1
+    container_name: tidb-cdc
+    command: >
+      sh -c "
+        echo 'Starting TiCDC server...';
+        /cdc server \
+          --addr=0.0.0.0:8300 \
+          --advertise-addr=tidb-cdc:8300 \
+          --pd=http://tidb-pd:2379 &
+
+        echo 'Waiting for TiCDC to become ready...';
+
+        until wget -qO- http://localhost:8300/status >/dev/null 2>&1; do
+          sleep 2;
+        done
+
+        echo 'Creating changefeed...';
+        /cdc cli changefeed create \
+          --server=http://tidb-cdc:8300 \
+          --changefeed-id=tidb-kafka-cdc \
+          --sink-uri='kafka://kafka:9092/tidb-cdc-events?protocol=canal-json&partition-num=1' || true;
+
+        echo 'CDC ready. Following logs...';
+        wait
+      "
+    networks:
+      - tidb-net
+    ports:
+      - "8300:8300"
+    depends_on:
+      tidb-server:
+        condition: service_healthy
+
+  tidb-tools:
+    image: mysql:8
+    container_name: tidb-tools
+    depends_on:
+      tidb-server:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+      echo 'Waiting for TiDB...';
+      sleep 5;
+      echo 'Importing schema...';
+      mysql -h tidb-server -P 4000 -u root < /sql/schema.sql;
+      echo 'Importing seed data...';
+      mysql -h tidb-server -P 4000 -u root < /sql/seed.sql;
+      echo 'DB init complete';
+      exit 0;
+      "
+    volumes:
+      - ./sql:/sql
+    networks:
+      - tidb-net
+  
+  # -----------------------
+  # Zookeeper
+  # -----------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    ports:
+      - "2181:2181"
+    networks:
+      - tidb-net
+
+  # -----------------------
+  # Kafka
+  # -----------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_started
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    networks:
+      - tidb-net
+
+  # -----------------------
+  # Node.js Consumer
+  # -----------------------
+  node-consumer:
+    build: ./node-consumer
+    container_name: node-consumer
+    depends_on:
+      kafka:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy          
+    ports:
+      - "3000:3000"
+      - "9090:9090"
+    networks:
+      - tidb-net
+
+  # -----------------------
+  # Prometheus
+  # -----------------------
+  prometheus:
+    image: prom/prometheus:v3.0.0
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9091:9090"
+    networks:
+      - tidb-net
+
+  # -----------------------
+  # Grafana
+  # -----------------------
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    hostname: grafana
+    depends_on:
+      - prometheus
+      - elasticsearch
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_LOG_LEVEL=info
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+        #     - grafana-data:/var/lib/grafana
+    networks:
+      - tidb-net
+    restart: unless-stopped
+
+  # -----------------------
+  # Elasticsearch
+  # -----------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.16.0
+    container_name: elasticsearch
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      xpack.security.enabled: "false"
+    ports:
+      - "9200:9200"
+    networks:
+      - tidb-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+networks:
+  tidb-net:
+    driver: bridge
+

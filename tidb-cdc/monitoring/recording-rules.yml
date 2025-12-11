@@ -1,0 +1,37 @@
+groups:
+  - name: tidb_cdc_recording_rules
+    interval: 30s
+    rules:
+      # Rate calculations
+      - record: job:tidb_cdc_operations:rate5m
+        expr: rate(tidb_cdc_operations_total[5m])
+
+      - record: job:tidb_cdc_operations:rate1h
+        expr: rate(tidb_cdc_operations_total[1h])
+
+      # Error rates
+      - record: job:tidb_cdc_errors:rate5m
+        expr: rate(tidb_cdc_processing_errors_total[5m])
+
+      - record: job:tidb_cdc_error_ratio:rate5m
+        expr: rate(tidb_cdc_processing_errors_total[5m]) / rate(tidb_cdc_operations_total[5m])
+
+      # Latency percentiles
+      - record: job:tidb_cdc_duration:p50
+        expr: histogram_quantile(0.50, rate(tidb_cdc_processing_duration_seconds_bucket[5m]))
+
+      - record: job:tidb_cdc_duration:p95
+        expr: histogram_quantile(0.95, rate(tidb_cdc_processing_duration_seconds_bucket[5m]))
+
+      - record: job:tidb_cdc_duration:p99
+        expr: histogram_quantile(0.99, rate(tidb_cdc_processing_duration_seconds_bucket[5m]))
+
+      # Operations by type
+      - record: job:tidb_cdc_inserts:rate5m
+        expr: rate(tidb_cdc_operations_total{op="insert"}[5m])
+
+      - record: job:tidb_cdc_updates:rate5m
+        expr: rate(tidb_cdc_operations_total{op="update"}[5m])
+
+      - record: job:tidb_cdc_deletes:rate5m
+        expr: rate(tidb_cdc_operations_total{op="delete"}[5m])

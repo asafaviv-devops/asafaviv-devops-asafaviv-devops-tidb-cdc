@@ -1,0 +1,37 @@
+{
+  "name": "tidb-cdc-consumer",
+  "version": "2.0.0",
+  "description": "TiDB CDC Kafka Consumer with Prometheus, Elasticsearch, and Modern Best Practices",
+  "main": "index.js",
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "lint": "eslint .",
+    "test": "echo \"Tests not implemented\" && exit 0"
+  },
+  "keywords": [
+    "tidb",
+    "cdc",
+    "kafka",
+    "prometheus",
+    "elasticsearch",
+    "change-data-capture"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "kafkajs": "^2.2.4",
+    "@elastic/elasticsearch": "^8.16.0",
+    "prom-client": "^15.1.3",
+    "express": "^4.21.1",
+    "winston": "^3.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7",
+    "eslint": "^9.15.0"
+  }
+}
