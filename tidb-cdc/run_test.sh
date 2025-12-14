@@ -7,7 +7,7 @@
 # to verify TiCDC → Kafka → Node Consumer → Elasticsearch → Prometheus
 # ================================
 
-NET="tidb-cdc-v2-final-working_tidb-net"
+NET="tidb-cdc_tidb-net"
 MYSQL="docker run --rm --network $NET mysql:8"
 
 echo "🔵 Running CDC Data Tests..."
